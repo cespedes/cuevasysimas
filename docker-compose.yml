@@ -1,0 +1,43 @@
+# The catalogue on this machine, for trying changes: PostgreSQL and the server. The API and the public site
+# answer at http://localhost:64721 (the site answers the name of PUBLIC_SITE_URL, whatever the port).
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cuevasysimas
+      POSTGRES_PASSWORD: cuevasysimas
+      POSTGRES_DB: cuevasysimas
+    # Bound to localhost only: dev-grade credentials and no TLS.
+    ports:
+      - "127.0.0.1:64722:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cuevasysimas -d cuevasysimas"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build: .
+    environment:
+      HTTP_ADDR: ":64711"
+      DATABASE_URL: "postgres://cuevasysimas:cuevasysimas@postgres:5432/cuevasysimas?sslmode=disable"
+      PUBLIC_SITE_URL: "http://localhost:64721"
+      PLACE_FILES_ROOT: /data/place-files
+      # The zone of a coordinate is proposed by Nominatim; "off" turns it off.
+      NOMINATIM_URL: "off"
+    ports:
+      - "127.0.0.1:64721:64711"
+    volumes:
+      - place_files_data:/data/place-files
+    depends_on:
+      postgres:
+        condition: service_healthy
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  place_files_data:

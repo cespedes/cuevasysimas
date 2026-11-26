@@ -1,0 +1,28 @@
+# Loads the elements of OpenStreetMap that matter (caves, huts, via ferratas…) into the database, once
+# (cmd/osmsync): it downloads the extracts of Spain from Geofabrik if they changed, cuts them with osmium and
+# makes the table osm_elements say what they say. Started once a week by cuevasysimas-osm-sync.timer; what it
+# prints is in this unit's journal (journalctl -u cuevasysimas-osm-sync). See docs/osm-integration.md.
+#
+# It needs the network (the downloads) and the database, so it has one settings file of its own with the
+# connection, and the osmium tool (`apt install osmium-tool`). The extracts it downloads are kept in
+# StateDirectory, which systemd creates for the user.
+[Unit]
+Description=Cuevas y simas: load OpenStreetMap elements into the mirror
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=cuevasysimas
+Group=cuevasysimas
+# DATABASE_URL, OSM_CACHE_DIR and OSMIUM_BIN (deploy/systemd/osm-sync.env.example).
+EnvironmentFile=/opt/cuevasysimas/osm-sync.env
+ExecStart=/opt/cuevasysimas/bin/osmsync
+StateDirectory=cuevasysimas-osm
+TimeoutStartSec=2h
+# A background job: do not get in the way of the API.
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=true
+ProtectHome=true
+NoNewPrivileges=true

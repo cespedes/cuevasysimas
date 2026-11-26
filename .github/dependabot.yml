@@ -1,0 +1,37 @@
+version: 2
+updates:
+  # go.mod has two direct dependencies (pgx and x/text) plus a handful of indirect ones: low-noise on
+  # purpose, so a weekly check is enough.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns:
+          - '*'
+
+  # Keeps the actions in .github/workflows/ci.yml (checkout, setup-go,
+  # setup-python), which are pinned to a commit, current without anyone
+  # having to remember to bump them by hand.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # The base images of the Dockerfile (Go to build, Alpine to run).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+
+  # The image of the compose file: PostgreSQL.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # A new major version of PostgreSQL does not read the data directory of the previous one:
+      # moving to it is a migration done by hand (dump and restore), never a bump.
+      - dependency-name: postgres
+        update-types: ['version-update:semver-major']

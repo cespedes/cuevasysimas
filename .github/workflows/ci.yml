@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel a stale run when new commits land on the same branch/PR.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The Go that checks the code, the one that builds it: Dockerfile (golang:1.27-alpine) and the
+  # host. "1.27" with check-latest below is the newest 1.27.x, which is what govulncheck needs: it also
+  # checks the standard library of the Go it runs with, and an older patch has vulnerabilities that
+  # were fixed since. The `go` line of go.mod is only the oldest Go that can build the code, so it is
+  # not what is tested. Bump this and the Dockerfile together.
+  GO_VERSION: '1.27'
+
+# The actions are pinned to a commit, not to a tag: a tag can be moved to other code afterwards, a
+# commit cannot. The version is in the comment; Dependabot (.github/dependabot.yml) proposes the
+# newer commit, and keeps the comment up to date, when there is one.
+
+jobs:
+  go:
+    name: Go (format, build, vet, staticcheck, test)
+    runs-on: ubuntu-latest
+
+    # Matches docker-compose.yml's postgres service (same image, same
+    # dev-grade credentials) so the test suite runs against the same
+    # Postgres version production and local dev use.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cuevasysimas
+          POSTGRES_PASSWORD: cuevasysimas
+          POSTGRES_DB: cuevasysimas_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cuevasysimas -d cuevasysimas_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+          cache-dependency-path: go.sum
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l cmd internal)"
+          if [ -n "$unformatted" ]; then
+            echo "These files are not formatted (run go fmt):"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      # Pinned to a version, like the actions: a newer staticcheck may flag more, and that should
+      # arrive in a commit of its own, not on its own.
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+
+      - name: go test
+        env:
+          # internal/testutil.NewTx migrates this database itself (parsing
+          # the goose markers directly, no goose binary needed) the first
+          # time any test touches it. Without this var set, DB-backed tests
+          # just t.Skip instead of failing.
+          TEST_DATABASE_URL: postgres://cuevasysimas:cuevasysimas@localhost:5432/cuevasysimas_test?sslmode=disable
+        run: go test ./... -race -cover
+
+  # Apart from the go job, so that a vulnerability that is published tomorrow in something the code
+  # already uses turns this one red and not the tests.
+  vulncheck:
+    name: Vulnerabilities (govulncheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+          cache-dependency-path: go.sum
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
+  openapi:
+    name: Validate openapi.yaml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.x'
+
+      - run: pip install openapi-spec-validator==0.9.0
+
+      - name: Validate openapi.yaml
+        run: openapi-spec-validator openapi/openapi.yaml
+
+  docker:
+    name: Build the API image
+    runs-on: ubuntu-latest
+    # Catches a broken Dockerfile (a bad COPY path, a build step that
+    # only fails inside the image's own Go/Alpine version) here instead
+    # of first surfacing during an actual deploy — the go job above
+    # builds/tests the Go code directly on the runner, which doesn't
+    # exercise the Dockerfile at all. Build-only, no push: nothing here
+    # needs to leave the runner, this is purely a "does it still build"
+    # check.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: docker build
+        run: docker build .

@@ -1,0 +1,25 @@
+# The catalogue of places «Cuevas y simas»: the API of its clients, the public API and the public site.
+# Its settings are in /opt/cuevasysimas/api.env (readable only by the service user: it has the database
+# password); see docs/deployment.md.
+[Unit]
+Description=Cuevas y simas: the catalogue of places
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=cuevasysimas
+Group=cuevasysimas
+EnvironmentFile=/opt/cuevasysimas/api.env
+ExecStart=/opt/cuevasysimas/bin/cuevasysimas
+Restart=on-failure
+RestartSec=3
+# The server shuts down in an orderly way on SIGTERM, in at most 25 seconds.
+TimeoutStopSec=40
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/cuevasysimas/data
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

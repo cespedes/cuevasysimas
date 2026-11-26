@@ -1,0 +1,8 @@
+bin/
+.env
+.DS_Store
+*.swp
+# Where the photos and documents of the places are written when the server runs on this machine.
+/place-files/
+# The extracts of OpenStreetMap that cmd/osmsync downloads.
+/osm-cache/

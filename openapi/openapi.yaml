@@ -1,0 +1,2608 @@
+openapi: 3.0.3
+info:
+  title: Cuevas y simas — API
+  version: 1.0.0
+  description: 'REST API of the catalogue of places «Cuevas y simas» (https://cuevasysimas.es): the routes
+    that its clients use to read and change the catalogue, and the public ones. See docs/contract.md for
+    how a client proves who is acting.
+
+    Methods mean the same everywhere. GET reads and changes nothing. POST creates a resource in a collection,
+    or runs an action that no other method describes. PUT replaces a whole resource at a known URL and
+    is idempotent. PATCH changes only the fields that are sent. DELETE removes the resource at the URL,
+    or undoes something, and has no body.
+
+    Every endpoint that requires bearerAuth requires an assertion about somebody who belongs to at least
+    one group; the roles some endpoints ask for (admin, board) are those that the assertion says. A missing
+    or invalid assertion is 401, and one about somebody in no group, or without the role, 403.
+
+    Errors. Every error response has the shape `{"error": {"code": "...", "message": "..."}}` (see the
+    Error schema). A malformed JSON body is always `400 invalid_body` and an unexpected failure `500 internal_error`,
+    neither repeated on every endpoint.
+
+    '
+servers:
+- url: /api/v1
+paths:
+  /health:
+    get:
+      summary: Process liveness and database connectivity
+      description: 'No auth required — a reverse proxy or systemd unit polling this has no session token
+        to send, and there''s nothing here worth protecting. Returns 200 once the process is up and it
+        can reach Postgres (a 2-second ping); 503, same shape, when the database isn''t reachable within
+        that window.
+
+        '
+      responses:
+        '200':
+          description: The process is up and Postgres is reachable.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum:
+                    - ok
+                  database:
+                    type: string
+                    enum:
+                    - ok
+        '503':
+          description: The process is up but Postgres isn't reachable right now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum:
+                    - error
+                  database:
+                    type: string
+                    enum:
+                    - unreachable
+  /places/types:
+    get:
+      summary: List the types of place
+      description: 'Any person in a group. Cavidad (kind cave), Cañón (kind canyon) and the general types
+        an admin has added, each with whether its places have a state and how many places have it; the
+        cavities first, then the canyons and then the general ones, each in the order they were added.
+
+        '
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: The types
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PlaceType'
+    post:
+      summary: Add a type of place
+      description: 'Admin only. It is a general type: Cavidad and Cañón are fixed. The name is unique
+        ignoring case. Whether its places have a state (`has_state`, false if left out) is said now and
+        does not change.
+
+        '
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceTypeInput'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaceType'
+        '400':
+          description: invalid_body or place_type_name_required.
+        '403':
+          description: Requires admin.
+        '409':
+          description: duplicate_place_type.
+  /places/types/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    put:
+      summary: Rename a type of place
+      description: Admin only, and only a general type.
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceTypeInput'
+      responses:
+        '200':
+          description: The type as renamed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaceType'
+        '400':
+          description: invalid_id, invalid_body or place_type_name_required.
+        '403':
+          description: Requires admin.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: duplicate_place_type or fixed_place_type (Cueva, Sima and Cañón).
+    delete:
+      summary: Delete a type of place
+      description: Admin only. Only a general type no place has.
+      security:
+      - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          description: invalid_id.
+        '403':
+          description: Requires admin.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: fixed_place_type, or place_type_in_use — a place has it.
+  /places/subtypes:
+    get:
+      summary: List the subtypes of the cavities
+      description: 'Any person in a group. What a cavity is (Cueva, Sima, Torca, Mina, Abrigo and whatever
+        has been added), in the order they were added, each with how many places have it.
+
+        '
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: The subtypes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PlaceSubtype'
+    post:
+      summary: Add a subtype
+      description: Admin only. The name is unique ignoring case.
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceSubtypeInput'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaceSubtype'
+        '400':
+          description: invalid_body or subtype_name_required.
+        '403':
+          description: Requires admin.
+        '409':
+          description: duplicate_subtype.
+  /places/subtypes/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    put:
+      summary: Rename a subtype
+      description: Admin only. None is fixed.
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceSubtypeInput'
+      responses:
+        '200':
+          description: The subtype as renamed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaceSubtype'
+        '400':
+          description: invalid_id, invalid_body or subtype_name_required.
+        '403':
+          description: Requires admin.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: duplicate_subtype.
+    delete:
+      summary: Delete a subtype
+      description: Admin only. Only one no place has.
+      security:
+      - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          description: invalid_id.
+        '403':
+          description: Requires admin.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: subtype_in_use — a place has it.
+  /places/geologies:
+    get:
+      summary: List the geologies of the caves
+      description: 'Any person in a group. What a cave can be formed in (Caliza, Yeso, Hielo, Lava, Dolomía,
+        Mármol, Sal, Arenisca, Cuarcita, Conglomerado, Granito and whatever has been added), in the order
+        they were added, each with how many places have it.
+
+        '
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: The geologies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PlaceGeology'
+    post:
+      summary: Add a geology
+      description: Admin only. The name is unique ignoring case.
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceGeologyInput'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaceGeology'
+        '400':
+          description: invalid_body or geology_name_required.
+        '403':
+          description: Requires admin.
+        '409':
+          description: duplicate_geology.
+  /places/geologies/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    put:
+      summary: Rename a geology
+      description: Admin only. None is fixed.
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceGeologyInput'
+      responses:
+        '200':
+          description: The geology as renamed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaceGeology'
+        '400':
+          description: invalid_id, invalid_body or geology_name_required.
+        '403':
+          description: Requires admin.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: duplicate_geology.
+    delete:
+      summary: Delete a geology
+      description: Admin only. Only one no place has.
+      security:
+      - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          description: invalid_id.
+        '403':
+          description: Requires admin.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: geology_in_use — a place has it.
+  /places:
+    get:
+      summary: List the places
+      description: 'Any person in a group. Every place, by name ignoring case, unpaginated, with what
+        a table and its filters need: no long texts and no other points (GET /places/{id} has them).
+
+        '
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: The places
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PlaceListItem'
+    post:
+      summary: Add a place
+      description: Any person in a group. Blank text counts as no value.
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceInput'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Place'
+        '400':
+          description: invalid_body, place_name_required, place_type_required, unknown_place_type, place_area_required,
+            unknown_area, invalid_place_state, invalid_coordinates, invalid_altitude, unknown_geology,
+            invalid_place_measure, unknown_subtype, place_subtype_required (a cavity needs one), invalid_alt_names,
+            unknown_system, unknown_osm_element (not in the mirror, or only the type or only the id) or
+            invalid_place_fields (a depth, a horizontal length or a geology on a place that is not a cave,
+            a technical sheet on one that is neither a cave nor a canyon).
+        '409':
+          description: osm_element_in_use — another place already is that OpenStreetMap element.
+  /places/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    get:
+      summary: One place, with its points
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: The place
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Place'
+        '400':
+          description: invalid_id.
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Edit a place
+      description: 'Any person in a group. Replaces every field (what is left out is cleared), the type
+        included, which may be any one whose kind fits the fields. The other points are not touched.
+
+        '
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceInput'
+      responses:
+        '200':
+          description: The place as edited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Place'
+        '400':
+          description: invalid_id and everything creating can answer.
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      summary: Edit some fields of a place
+      description: 'Any person in a group. Changes only the fields the body names and leaves the rest
+        as it is (null clears a field that may be empty); the result has to be a valid place, with the
+        same checks as a whole edit. It is made on the place as it is when it is saved: if somebody saves
+        it in between it starts again on the new one (409 concurrent_update after three tries). Nothing
+        changes if no field differs.
+
+        '
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlacePatch'
+      responses:
+        '200':
+          description: The place as edited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Place'
+        '400':
+          description: invalid_id, invalid_body (malformed, no field, an unknown field or one of the wrong
+            type) and everything creating can answer.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: concurrent_update.
+    delete:
+      summary: Delete a place
+      description: Admin or board. With its points and its files. 409 place_in_use when an activity went
+        to it.
+      security:
+      - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          description: invalid_id.
+        '403':
+          description: Requires admin or board.
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /places/{id}/settings/visibility:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    put:
+      summary: Say how open a place is
+      description: 'Admin or board. Replaces the three levels and the lock at once: all four fields are
+        required. Each level is `club` (the members of the club alone) or `public`. A place is `club`
+        at every level until somebody opens it. The location and the content cannot be more open than
+        the place, and a protected place cannot have anything public. It is a change of the place like
+        any other (it says who and when, and it is announced). The path is not /places/{id}/visibility
+        because that would clash with the reference data under /places/types.
+
+        '
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceVisibility'
+      responses:
+        '200':
+          description: The place
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Place'
+        '400':
+          description: invalid_id, invalid_body, invalid_place_visibility (neither club nor public), visibility_too_open
+            (location or content more open than the place) or place_protected (something public on a protected
+            place).
+        '403':
+          description: forbidden — neither admin nor board.
+        '404':
+          description: not_found.
+  /places/{id}/links/osm:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    put:
+      summary: Say which OpenStreetMap element a place is
+      description: 'Any person in a group. Makes the place the element of the mirror named by osm_type
+        and osm_id, instead of the one it was; nothing else of the place changes. The element stops being
+        a candidate.
+
+        '
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - osm_type
+              - osm_id
+              properties:
+                osm_type:
+                  type: string
+                  enum:
+                  - node
+                  - way
+                  - relation
+                osm_id:
+                  type: integer
+                  format: int64
+      responses:
+        '200':
+          description: The place
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Place'
+        '400':
+          description: invalid_id, invalid_body or unknown_osm_element (not in the mirror, or only an
+            invalid type or id).
+        '404':
+          description: not_found.
+        '409':
+          description: osm_element_in_use — another place already is that element.
+    delete:
+      summary: Say a place is not an OpenStreetMap element any more
+      description: Any person in a group. The element stays in the mirror and is a candidate again. A
+        place with no element is not an error.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: The place
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Place'
+        '400':
+          description: invalid_id.
+        '404':
+          description: not_found.
+  /places/{id}/links/osm/review:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    post:
+      summary: Say that what changed in the OpenStreetMap element of a place has been looked at
+      description: 'Any person in a group. What the element is now becomes what the place has seen of
+        it, so osm_changes is empty until it changes again. Nothing else of the place changes, not even
+        updated_at.
+
+        '
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: The place
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Place'
+        '400':
+          description: invalid_id.
+        '404':
+          description: not_found.
+        '409':
+          description: place_not_linked — the place is not an OpenStreetMap element.
+  /places/{id}/points:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    post:
+      summary: Add a point to a place
+      description: Any person in a group. It counts as a change of the place.
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlacePointInput'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlacePoint'
+        '400':
+          description: invalid_id, invalid_body, invalid_point_kind, invalid_coordinates or invalid_altitude.
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /places/{id}/points/{pointId}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    - name: pointId
+      in: path
+      required: true
+      schema:
+        type: integer
+    put:
+      summary: Edit a point of a place
+      description: Any person in a group. Replaces every field.
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlacePointInput'
+      responses:
+        '200':
+          description: The point as edited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlacePoint'
+        '400':
+          description: invalid_id, invalid_body, invalid_point_kind, invalid_coordinates or invalid_altitude.
+        '404':
+          description: not_found — the place, or a point that is not of that place.
+    delete:
+      summary: Remove a point of a place
+      description: Any person in a group.
+      security:
+      - bearerAuth: []
+      responses:
+        '204':
+          description: Removed
+        '400':
+          description: invalid_id.
+        '404':
+          description: not_found — the place, or a point that is not of that place.
+  /places/{id}/files:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    get:
+      summary: The files of a place
+      description: Any person in a group. Photos, topographies, permits, documents; oldest first.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: The files
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PlaceFile'
+        '400':
+          description: invalid_id.
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      summary: Attach a file to a place
+      description: 'Any person in a group. One file, at most 10 MiB, in the multipart field `file`, and
+        an optional caption in `title` (200 characters at most). Its type is decided from its bytes: a
+        PDF or an image can be shown in the browser, anything else is only downloaded. It counts as a
+        change of the place.
+
+        '
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                title:
+                  type: string
+      responses:
+        '201':
+          description: Attached
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaceFile'
+        '400':
+          description: invalid_id, invalid_body, file_required (missing or empty) or file_title_too_long.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          description: file_too_large.
+  /places/{id}/files/{fileId}/file:
+    get:
+      summary: The bytes of a file of a place
+      description: 'Any person in a group; also accepts the session cookie, so that a browser can open
+        it. A PDF or an image is shown in the page; anything else is downloaded, and sandboxed. `?download=1`
+        forces a download.
+
+        '
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: fileId
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: download
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - '1'
+      responses:
+        '200':
+          description: The file
+        '400':
+          description: invalid_id.
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /places/{id}/files/{fileId}:
+    delete:
+      summary: Remove a file of a place
+      description: Whoever attached it, admin or board. It counts as a change of the place.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: fileId
+        in: path
+        required: true
+        schema:
+          type: integer
+      responses:
+        '204':
+          description: Removed
+        '400':
+          description: invalid_id.
+        '403':
+          description: place_file_not_yours.
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /systems:
+    get:
+      summary: List the systems of cavities
+      description: Any person in a group. By name, each with its cavities by name.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: The systems
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SystemListItem'
+    post:
+      summary: Create a system
+      description: 'Any person in a group. A system is a group of cavities that are connected underground,
+        with a name (unique ignoring case), a description and files of its own. Its cavities are set with
+        PUT /systems/{id}/places.
+
+        '
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SystemInput'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/System'
+        '400':
+          description: invalid_body, system_name_required or system_name_too_long.
+        '409':
+          description: duplicate_system.
+  /systems/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    get:
+      summary: One system with its cavities
+      description: Any person in a group. Each cavity with everything about it, long texts included.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: The system
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/System'
+        '400':
+          description: invalid_id.
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Edit a system
+      description: Any person in a group. Replaces the name and the description (what is left out is cleared).
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SystemInput'
+      responses:
+        '200':
+          description: The system as edited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/System'
+        '400':
+          description: invalid_id, invalid_body, system_name_required or system_name_too_long.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: duplicate_system.
+    delete:
+      summary: Delete a system
+      description: Admin or board. With its files; its cavities stay, in no system.
+      security:
+      - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          description: invalid_id.
+        '403':
+          description: Requires admin or board.
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /systems/{id}/places:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    put:
+      summary: Set the cavities of a system
+      description: 'Any person in a group. Makes the cavities exactly the given ones: the others are left
+        in no system, and one that was in another system moves (a cavity is in at most one). A repeated
+        id counts once. It counts as a change of the system.
+
+        '
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - place_ids
+              properties:
+                place_ids:
+                  type: array
+                  items:
+                    type: integer
+      responses:
+        '200':
+          description: The cavities as they are now
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SystemPlaceRef'
+        '400':
+          description: invalid_id, invalid_body, unknown_place or not_a_cavity (a place that is not of
+            the cave kind).
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /systems/{id}/files:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    get:
+      summary: The files of a system
+      description: Any person in a group. Photos, topographies, permits, documents; oldest first.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: The files
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PlaceFile'
+        '400':
+          description: invalid_id.
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      summary: Attach a file to a system
+      description: 'Any person in a group. One file, at most 10 MiB, in the multipart field `file`, and
+        an optional caption in `title` (200 characters at most). Its type is decided from its bytes: a
+        PDF or an image can be shown in the browser, anything else is only downloaded. It counts as a
+        change of the system.
+
+        '
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                title:
+                  type: string
+      responses:
+        '201':
+          description: Attached
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaceFile'
+        '400':
+          description: invalid_id, invalid_body, file_required (missing or empty) or file_title_too_long.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          description: file_too_large.
+  /systems/{id}/files/{fileId}/file:
+    get:
+      summary: The bytes of a file of a system
+      description: 'Any person in a group; also accepts the session cookie, so that a browser can open
+        it. A PDF or an image is shown in the page; anything else is downloaded, and sandboxed. `?download=1`
+        forces a download.
+
+        '
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: fileId
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: download
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - '1'
+      responses:
+        '200':
+          description: The file
+        '400':
+          description: invalid_id.
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /systems/{id}/files/{fileId}:
+    delete:
+      summary: Remove a file of a system
+      description: Whoever attached it, admin or board. It counts as a change of the system.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+      - name: fileId
+        in: path
+        required: true
+        schema:
+          type: integer
+      responses:
+        '204':
+          description: Removed
+        '400':
+          description: invalid_id.
+        '403':
+          description: place_file_not_yours.
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /areas:
+    get:
+      summary: List zones, or search them
+      description: 'Any person in a group. With no query, the countries; with `parent_id`, the zones directly
+        below that one; with `search`, the zones whose name contains the text ignoring case, accents and
+        punctuation, the exact ones first, each with its ancestors (an empty text finds nothing).
+
+        '
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: parent_id
+        in: query
+        required: false
+        schema:
+          type: integer
+      - name: search
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 20
+          maximum: 50
+        description: Only for a search.
+      responses:
+        '200':
+          description: The zones, by name
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Area'
+        '400':
+          description: invalid_id — a parent_id that is not a number.
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      summary: Add a zone below another, or a country
+      description: 'Any person in a group to add a zone below another; without `parent_id` (or with 0)
+        it adds a country, a zone that is in no other one, which only an admin may; a zone in Spain, at
+        any depth, is only added by an admin too (they are loaded from the INE''s lists). The kind is
+        that of the zones already below the parent unless it is given; with none below it yet it has to
+        be given; a country is a "País" unless it is said otherwise. The name is unique below each zone
+        (among the countries, for a country) ignoring case, accents and punctuation.
+
+        '
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AreaInput'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Area'
+        '400':
+          description: invalid_body, unknown_area, area_name_required, area_kind_required or area_text_too_long.
+        '403':
+          description: area_root_admin_only (a country) or area_spain_admin_only (a zone in Spain), by
+            somebody who is not admin.
+        '409':
+          description: duplicate_area.
+  /areas/locate:
+    get:
+      summary: Propose the zone a point is in
+      description: 'Any person in a group. Asks a Nominatim instance (OpenStreetMap''s geocoder, configured
+        with `NOMINATIM_URL`) which municipality and country contain the point, and answers with the zone
+        of the seed that has that INE code (a Spanish municipality) or else that country''s ISO code,
+        with its ancestors; `area` is null when none is known or when the lookup is turned off. Answers
+        are kept for a day, by the point rounded to about ten metres. It is a help to propose a zone,
+        never a fact.
+
+        '
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: lat
+        in: query
+        required: true
+        schema:
+          type: number
+      - name: lon
+        in: query
+        required: true
+        schema:
+          type: number
+      responses:
+        '200':
+          description: The zone, or null
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  area:
+                    nullable: true
+                    allOf:
+                    - $ref: '#/components/schemas/Area'
+        '400':
+          description: invalid_coordinates — missing, not numbers, or out of range.
+        '502':
+          description: locate_unavailable — the Nominatim instance did not answer.
+  /public/places:
+    get:
+      summary: The places that the viewer may know exist
+      description: 'The read-only face of the catalogue for people who are not signed in. No token is
+        anonymous, a good bearer token is the person (a member of a group sees more) and a bad one is
+        401, never the public answer. A place whose level `place` is closed to the viewer is not in the
+        list. Of the rest, the coordinates are there only if the viewer may see the location. Who wrote
+        a place, the OpenStreetMap element, the visibility and the files are never in it. Each address
+        may ask only so often (429 `rate_limited`). Without a token the answer may be cached for a minute
+        by anybody (`Cache-Control: public, max-age=60`); with one it is `private, no-store`, and it always
+        varies on `Authorization`.
+
+        '
+      security:
+      - {}
+      - bearerAuth: []
+      responses:
+        '200':
+          description: The places, by name
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PublicPlaceListItem'
+        '401':
+          description: unauthorized — a token that is not valid.
+        '429':
+          description: rate_limited.
+  /public/places/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    get:
+      summary: One place as the viewer may see it
+      description: 'As the list. A place that is closed to the viewer and one that does not exist give
+        the same answer. `location` is there only if the viewer may see where the place is (the other
+        points, how to get there), and `content` only if they may see what is said of it.
+
+        '
+      security:
+      - {}
+      - bearerAuth: []
+      responses:
+        '200':
+          description: The place
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicPlace'
+        '400':
+          description: invalid_id.
+        '401':
+          description: unauthorized — a token that is not valid.
+        '404':
+          description: not_found — it does not exist, or the viewer may not know it does.
+        '429':
+          description: rate_limited.
+  /osm/elements:
+    get:
+      summary: Elements of the OpenStreetMap mirror inside a box
+      description: 'Any person in a group. Reads the local mirror loaded by cmd/osmsync, never OpenStreetMap:
+        the elements not marked as gone inside the box, caves, canyons and mines first, then huts and
+        via ferratas, at most 1500 (`truncated` says there were more). A `west` greater than `east` is
+        a box across the antimeridian.
+
+        '
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: bbox
+        in: query
+        required: true
+        description: south,west,north,east in degrees
+        schema:
+          type: string
+      - name: category
+        in: query
+        description: 'comma-separated: cave, canyon, mine, hut, via_ferrata (all if left out)'
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The elements
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  elements:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                          enum:
+                          - node
+                          - way
+                          - relation
+                        id:
+                          type: integer
+                          format: int64
+                        lat:
+                          type: number
+                        lon:
+                          type: number
+                        category:
+                          type: string
+                          enum:
+                          - cave
+                          - canyon
+                          - mine
+                          - hut
+                          - via_ferrata
+                        name:
+                          type: string
+                  truncated:
+                    type: boolean
+        '400':
+          description: invalid_bbox or invalid_osm_category.
+  /osm/search:
+    get:
+      summary: Search the elements of the OpenStreetMap mirror by name
+      description: 'Any person in a group. The elements, not yet a place and not gone from OpenStreetMap,
+        whose name (or other name) holds the words of `q`, whatever the case, the accents and the punctuation:
+        the same name first, then those that start with it, then those with all its words, then the rest,
+        and in each the club''s activity first and the shorter name; at most 20.
+
+        '
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+          maxLength: 200
+      - name: category
+        in: query
+        description: 'comma-separated: cave, canyon, mine, hut, via_ferrata (all if left out)'
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The elements, the best first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  elements:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                          enum:
+                          - node
+                          - way
+                          - relation
+                        id:
+                          type: integer
+                          format: int64
+                        lat:
+                          type: number
+                        lon:
+                          type: number
+                        category:
+                          type: string
+                          enum:
+                          - cave
+                          - canyon
+                          - mine
+                          - hut
+                          - via_ferrata
+                        name:
+                          type: string
+                        where:
+                          type: string
+                          description: The municipality and the province ("Rasines, Cantabria"); left
+                            out if the element is in no known municipality.
+        '400':
+          description: invalid_osm_query (too long) or invalid_osm_category.
+  /osm/nearby:
+    get:
+      summary: Elements of the OpenStreetMap mirror near a point, to link a place
+      description: 'Any person in a group. The elements within `radius` metres (500 by default, 2000 at
+        most) of the point that are not yet a place, those whose name looks like `name` first (exact,
+        then similar), then the nearest, at most 30.
+
+        '
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: lat
+        in: query
+        required: true
+        schema:
+          type: number
+      - name: lon
+        in: query
+        required: true
+        schema:
+          type: number
+      - name: radius
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 2000
+      - name: name
+        in: query
+        schema:
+          type: string
+      - name: category
+        in: query
+        description: 'comma-separated: cave, canyon, mine, hut, via_ferrata (all if left out)'
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The candidates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  elements:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                          enum:
+                          - node
+                          - way
+                          - relation
+                        id:
+                          type: integer
+                          format: int64
+                        lat:
+                          type: number
+                        lon:
+                          type: number
+                        category:
+                          type: string
+                          enum:
+                          - cave
+                          - canyon
+                          - mine
+                          - hut
+                          - via_ferrata
+                        name:
+                          type: string
+                        where:
+                          type: string
+                          description: The zone of the element and the one it is in; left out if it is
+                            in none known.
+                        distance_m:
+                          type: integer
+                        name_match:
+                          type: string
+                          enum:
+                          - exact
+                          - similar
+        '400':
+          description: invalid_bbox (the point is not valid), invalid_radius or invalid_osm_category.
+  /osm/elements/{type}/{id}:
+    get:
+      summary: One element of the OpenStreetMap mirror
+      description: Any person in a group. All the tags and the outline of the element, marked as gone
+        or not.
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: type
+        in: path
+        required: true
+        schema:
+          type: string
+          enum:
+          - node
+          - way
+          - relation
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        '200':
+          description: The element
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  type:
+                    type: string
+                    enum:
+                    - node
+                    - way
+                    - relation
+                  id:
+                    type: integer
+                    format: int64
+                  version:
+                    type: integer
+                  timestamp:
+                    type: string
+                    format: date-time
+                  category:
+                    type: string
+                    enum:
+                    - cave
+                    - canyon
+                    - mine
+                    - hut
+                    - via_ferrata
+                  lat:
+                    type: number
+                  lon:
+                    type: number
+                  tags:
+                    type: object
+                    additionalProperties:
+                      type: string
+                  geometry:
+                    type: object
+                    nullable: true
+                  deleted_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  area_id:
+                    type: integer
+                    description: The zone (a row of areas) the element is in; left out if it is in none
+                      known.
+                  where:
+                    type: string
+                    description: The municipality and the province; left out if the element is in no known
+                      municipality.
+        '400':
+          description: invalid_osm_element or invalid_id.
+        '404':
+          description: not_found.
+  /areas/geocode:
+    get:
+      summary: Look for places by name
+      description: 'Any person in a group. Asks the Nominatim instance (`NOMINATIM_URL`) for the places
+        a text names, at most 6, best first, to find them on a map. Answers are kept for a day by the
+        text asked. An empty list when nothing is found, the text is blank or the lookup is turned off.
+
+        '
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+          maxLength: 200
+      responses:
+        '200':
+          description: The places
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    lat:
+                      type: number
+                    lon:
+                      type: number
+                    bounds:
+                      nullable: true
+                      type: object
+                      properties:
+                        south:
+                          type: number
+                        west:
+                          type: number
+                        north:
+                          type: number
+                        east:
+                          type: number
+        '400':
+          description: area_text_too_long.
+        '502':
+          description: search_unavailable — the Nominatim instance did not answer.
+  /areas/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    get:
+      summary: One zone, with its ancestors
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: The zone
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Area'
+        '400':
+          description: invalid_id.
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Rename a zone, change its kind and move it
+      description: 'Admin only. A country can be renamed. Without a kind, it stays. `parent_id` moves
+        the zone, with all that is below it, below another zone, or makes it a country if it is null;
+        if it is left out the zone stays where it is. Nothing changes if any part is refused.
+
+        '
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AreaUpdate'
+      responses:
+        '200':
+          description: The zone as changed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Area'
+        '400':
+          description: invalid_id, invalid_body, area_name_required, area_text_too_long or unknown_area
+            (the new parent).
+        '403':
+          description: Requires admin.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: duplicate_area.
+    delete:
+      summary: Delete a zone
+      description: Admin only. Only a zone with no zones below it and no places in it (a country too).
+      security:
+      - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          description: invalid_id.
+        '403':
+          description: Requires admin.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: area_has_children or area_in_use.
+  /areas/{id}/merge:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    post:
+      summary: Merge a zone into another below the same one
+      description: 'Admin only. Moves the zones below this one and the places in it to the other, and
+        deletes this one, in one transaction.
+
+        '
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - into_id
+              properties:
+                into_id:
+                  type: integer
+      responses:
+        '200':
+          description: The id of the zone it was merged into
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+        '400':
+          description: invalid_id, invalid_body or area_merge_self.
+        '403':
+          description: Requires admin.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: area_merge_parents (they are not below the same zone) or duplicate_area (a zone
+            below this one has the name of one below the other).
+  /places/refs:
+    get:
+      summary: The names of the places a client keeps the ids of
+      description: 'Any person in a group. The places with the ids of `ids` (numbers separated by commas,
+        at most 200), by name, as the person that the assertion is about may know them: a place closed
+        to them, or that does not exist, is left out.'
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: ids
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Numbers separated by commas, such as 1,2,3.
+      responses:
+        '200':
+          description: The places, by name
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PlaceRef'
+        '400':
+          description: invalid_id (not a number) or too_many_ids (more than 200).
+        '401':
+          description: unauthorized.
+  /places/{id}/references/{key}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    - name: key
+      in: path
+      required: true
+      schema:
+        type: string
+        maxLength: 200
+      description: The client's own key for this use of the place (activity:123).
+    put:
+      summary: Say that the client uses a place
+      description: Any person in a group who may know the place. The client the assertion comes from uses
+        the place in the way that `key` says. Saying it again changes nothing. A place that any client
+        uses is not deleted.
+      security:
+      - bearerAuth: []
+      responses:
+        '204':
+          description: Done.
+        '400':
+          description: invalid_id or invalid_reference (a blank key, or one longer than 200 characters).
+        '404':
+          description: not_found — also for a place closed to the person.
+    delete:
+      summary: Say that the client no longer uses a place
+      description: Any person in a group. One that was not there is no error.
+      security:
+      - bearerAuth: []
+      responses:
+        '204':
+          description: Done.
+        '400':
+          description: invalid_id.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: assertion
+      description: 'An assertion that a client signs (Ed25519) about the person who is acting, `v1.<payload>.<signature>`:
+        see docs/contract.md. The catalogue checks it with the public key of its issuer; it keeps no session.
+
+        '
+  responses:
+    NotFound:
+      description: Resource not found
+  schemas:
+    AreaRef:
+      type: object
+      properties:
+        id:
+          type: integer
+        kind:
+          type: string
+        name:
+          type: string
+    AreaInput:
+      type: object
+      required:
+      - name
+      properties:
+        parent_id:
+          type: integer
+          nullable: true
+          description: The zone it is added below; absent, null or 0 for a country (admin only).
+        name:
+          type: string
+          maxLength: 200
+        kind:
+          type: string
+          maxLength: 60
+          description: The text that names its level (Provincia, Distrito…); the kind of its siblings
+            if left out.
+    AreaUpdate:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+          maxLength: 200
+        kind:
+          type: string
+          maxLength: 60
+          description: It stays if left out.
+        parent_id:
+          type: integer
+          nullable: true
+          description: The zone it moves below; null makes it a country; left out, it stays where it is.
+    Area:
+      type: object
+      properties:
+        id:
+          type: integer
+        parent_id:
+          type: integer
+          description: Absent for a country.
+        kind:
+          type: string
+          description: 'The text that names its level: País, Comunidad autónoma, Provincia, Municipio…'
+        name:
+          type: string
+        code:
+          type: string
+          description: 'An official code when there is one: ISO 3166-1 alpha-2 for a country, the INE''s
+            for a Spanish community, province or municipality.'
+        created_by:
+          type: string
+          description: The login of whoever added the zone through the API; absent for the zones loaded
+            with the catalogue.
+        child_count:
+          type: integer
+          description: Zones directly below it.
+        place_count:
+          type: integer
+          description: Places directly in it.
+        ancestors:
+          type: array
+          description: The zones it is in, the country first, without itself. Given by a search and by
+            GET /areas/{id}.
+          items:
+            $ref: '#/components/schemas/AreaRef'
+    PlaceTypeInput:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        has_state:
+          type: boolean
+          description: 'Only when adding a type: whether its places have a state. Ignored when renaming.'
+    PlaceType:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        kind:
+          type: string
+          enum:
+          - cave
+          - canyon
+          - general
+          description: Cavidad is cave, Cañón is canyon, every type an admin adds is general.
+        has_state:
+          type: boolean
+          description: Whether the places of the type have a state (Cavidad, Cañón and Vía ferrata do).
+        place_count:
+          type: integer
+          description: How many places have this type.
+    PlaceSubtypeInput:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+    PlaceSubtype:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        place_count:
+          type: integer
+          description: How many places have this subtype.
+    PlaceGeologyInput:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+    PlaceGeology:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        place_count:
+          type: integer
+          description: How many places have this geology.
+    PlaceInput:
+      type: object
+      required:
+      - type_id
+      - name
+      - area_id
+      - lat
+      - lon
+      properties:
+        type_id:
+          type: integer
+          description: A type of GET /places/types.
+        name:
+          type: string
+        alt_names:
+          type: array
+          items:
+            type: string
+            maxLength: 200
+          maxItems: 20
+          description: 'Other names it is known by: trimmed, without blanks or repeats (ignoring case).'
+        state:
+          type: string
+          enum:
+          - open
+          - permit_required
+          - tourist
+          - closed
+          default: open
+          description: 'How it can be visited: freely, only with a permit, as a paid attraction, or not
+            at all. Only for a type that has a state (has_state); refused for any other.'
+        subtype_id:
+          type: integer
+          nullable: true
+          description: What a cavity is (of GET /places/subtypes). Required for a place whose type is
+            a cave (Cavidad), refused for any other.
+        system_id:
+          type: integer
+          nullable: true
+          description: The system a cavity is in (of GET /systems). Only for a cavity.
+        area_id:
+          type: integer
+          description: 'The most specific zone it is in (of GET /areas): at least the country.'
+        lat:
+          type: number
+          minimum: -90
+          maximum: 90
+          description: WGS84 latitude of the main coordinate, in degrees.
+        lon:
+          type: number
+          minimum: -180
+          maximum: 180
+          description: WGS84 longitude of the main coordinate, in degrees.
+        altitude_m:
+          type: integer
+          minimum: -500
+          maximum: 9000
+          nullable: true
+          description: Altitude of the main coordinate, in metres above sea level.
+        access:
+          type: string
+          nullable: true
+          description: How to get there.
+        description:
+          type: string
+          nullable: true
+        depth_m:
+          type: integer
+          minimum: 0
+          maximum: 20000
+          nullable: true
+          description: Only for a cavity (a place whose type is of the cave kind).
+        horizontal_length_m:
+          type: integer
+          minimum: 0
+          maximum: 2000000
+          nullable: true
+          description: Only for a cavity (a place whose type is of the cave kind).
+        geology_id:
+          type: integer
+          nullable: true
+          description: What a cave is formed in (of GET /places/geologies). Only for a cavity.
+        technical_sheet:
+          type: string
+          nullable: true
+          description: What has to be installed to go through it. Only for a cavity or a canyon.
+        osm_type:
+          type: string
+          enum:
+          - node
+          - way
+          - relation
+          nullable: true
+          description: With osm_id, the element of the OpenStreetMap mirror the place is (GET /osm/elements).
+            Only creating reads it; an edit leaves it as it was.
+        osm_id:
+          type: integer
+          format: int64
+          nullable: true
+    PlacePatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      description: 'Some of the fields of PlaceInput, and only those named change. A field that is left
+        out is not touched and one given as null is cleared (if it may be empty). The place that results
+        has to be valid, as for a whole edit. The element of OpenStreetMap is not a field here.
+
+        '
+      properties:
+        type_id:
+          type: integer
+          description: A type of GET /places/types.
+        name:
+          type: string
+        alt_names:
+          type: array
+          items:
+            type: string
+            maxLength: 200
+          maxItems: 20
+          description: 'Other names it is known by: trimmed, without blanks or repeats (ignoring case).'
+        state:
+          type: string
+          enum:
+          - open
+          - permit_required
+          - tourist
+          - closed
+          default: open
+          description: 'How it can be visited: freely, only with a permit, as a paid attraction, or not
+            at all. Only for a type that has a state (has_state); refused for any other.'
+        subtype_id:
+          type: integer
+          nullable: true
+          description: What a cavity is (of GET /places/subtypes). Required for a place whose type is
+            a cave (Cavidad), refused for any other.
+        system_id:
+          type: integer
+          nullable: true
+          description: The system a cavity is in (of GET /systems). Only for a cavity.
+        area_id:
+          type: integer
+          description: 'The most specific zone it is in (of GET /areas): at least the country.'
+        lat:
+          type: number
+          minimum: -90
+          maximum: 90
+          description: WGS84 latitude of the main coordinate, in degrees.
+        lon:
+          type: number
+          minimum: -180
+          maximum: 180
+          description: WGS84 longitude of the main coordinate, in degrees.
+        altitude_m:
+          type: integer
+          minimum: -500
+          maximum: 9000
+          nullable: true
+          description: Altitude of the main coordinate, in metres above sea level.
+        access:
+          type: string
+          nullable: true
+          description: How to get there.
+        description:
+          type: string
+          nullable: true
+        depth_m:
+          type: integer
+          minimum: 0
+          maximum: 20000
+          nullable: true
+          description: Only for a cavity (a place whose type is of the cave kind).
+        horizontal_length_m:
+          type: integer
+          minimum: 0
+          maximum: 2000000
+          nullable: true
+          description: Only for a cavity (a place whose type is of the cave kind).
+        geology_id:
+          type: integer
+          nullable: true
+          description: What a cave is formed in (of GET /places/geologies). Only for a cavity.
+        technical_sheet:
+          type: string
+          nullable: true
+          description: What has to be installed to go through it. Only for a cavity or a canyon.
+    PlaceListItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        type_id:
+          type: integer
+        type_name:
+          type: string
+        kind:
+          type: string
+          enum:
+          - cave
+          - canyon
+          - general
+        name:
+          type: string
+        alt_names:
+          type: array
+          items:
+            type: string
+          description: The other names, empty if there are none.
+        state:
+          type: string
+          enum:
+          - open
+          - permit_required
+          - tourist
+          - closed
+          description: Absent if the type of the place has none.
+        subtype_id:
+          type: integer
+          description: Only a cavity.
+        subtype:
+          type: string
+          description: The name of the subtype of a cavity.
+        system_id:
+          type: integer
+          description: The system a cavity is in, if it is in one.
+        system:
+          type: string
+          description: The name of that system.
+        area_id:
+          type: integer
+          description: The most specific zone it is in.
+        area_ids:
+          type: array
+          items:
+            type: integer
+          description: That zone and the ones it is in, the country first.
+        where:
+          type: string
+          description: 'The names of those zones from the most specific to the country, without the autonomous
+            community when there is a province: Valdemanco, Madrid, España.'
+        area_names:
+          type: string
+          description: 'The names of all of those zones, the community too, from the most specific to
+            the country, for a search to look in: Valdemanco, Madrid, Comunidad de Madrid, España.'
+        lat:
+          type: number
+        lon:
+          type: number
+        altitude_m:
+          type: integer
+          description: Altitude of the main coordinate, in metres above sea level.
+        depth_m:
+          type: integer
+        horizontal_length_m:
+          type: integer
+        geology_id:
+          type: integer
+        geology:
+          type: string
+          description: The name of the geology of a cave.
+        osm_changed:
+          type: boolean
+          description: True if the OpenStreetMap element the place is has changed since it was linked
+            or last reviewed (Place.osm_changes says what). Left out otherwise.
+        visibility:
+          $ref: '#/components/schemas/PlaceVisibility'
+        withheld:
+          type: array
+          description: 'The parts of the place that the viewer may not see and that were left out (zero
+            or empty). Always left out for the members of the club, who are the only people who reach
+            these routes for now.
+
+            '
+          items:
+            type: string
+            enum:
+            - place
+            - measures
+            - coordinates
+            - points
+            - access
+            - sheet
+            - files
+            - authors
+    PublicPlaceListItem:
+      type: object
+      description: A place as the public list gives it. `coordinates` is left out (not null) when the
+        viewer may not see the location.
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        alt_names:
+          type: array
+          items:
+            type: string
+        type:
+          type: string
+          description: 'What it is: Cavidad, Cañón…'
+        subtype:
+          type: string
+          description: 'What a cavity is: cueva, sima… Left out for the rest.'
+        state:
+          type: string
+          enum:
+          - open
+          - permit_required
+          - tourist
+          - closed
+          description: Left out for a place whose type has none.
+        where:
+          type: string
+          description: The zone and the ones it is in, from the most specific to the country.
+        zone_ids:
+          type: array
+          items:
+            type: integer
+          description: Those zones, the country first.
+        measures:
+          $ref: '#/components/schemas/PublicMeasures'
+        coordinates:
+          $ref: '#/components/schemas/PublicCoordinates'
+    PublicPlace:
+      description: A place as its public page gives it.
+      allOf:
+      - $ref: '#/components/schemas/PublicPlaceListItem'
+      - type: object
+        properties:
+          zones:
+            type: array
+            description: The zone of the place and the ones it is in, the country first.
+            items:
+              type: object
+              properties:
+                id:
+                  type: integer
+                kind:
+                  type: string
+                name:
+                  type: string
+          location:
+            type: object
+            description: Left out if the viewer may not see where the place is.
+            properties:
+              points:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PublicPoint'
+              access:
+                type: string
+                description: How to get there.
+          content:
+            type: object
+            description: Left out if the viewer may not see what is said of the place.
+            properties:
+              description:
+                type: string
+              technical_sheet:
+                type: string
+    PublicCoordinates:
+      type: object
+      properties:
+        lat:
+          type: number
+        lon:
+          type: number
+        altitude_m:
+          type: integer
+    PublicMeasures:
+      type: object
+      description: Left out if the place has none.
+      properties:
+        depth_m:
+          type: integer
+        horizontal_length_m:
+          type: integer
+        geology:
+          type: string
+    PublicPoint:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum:
+          - parking
+          - approach
+          - waypoint
+          - access
+          - other
+        name:
+          type: string
+        lat:
+          type: number
+        lon:
+          type: number
+        altitude_m:
+          type: integer
+        note:
+          type: string
+    PlaceVisibility:
+      type: object
+      required:
+      - place
+      - location
+      - content
+      - protected
+      description: 'How open a place is, in three levels. Where `place` is closed whoever may not see
+        it does not know it exists (it is not in the lists and is a 404). Who wrote it is never public.
+
+        '
+      properties:
+        place:
+          type: string
+          enum:
+          - club
+          - public
+          description: 'The place itself: that it exists, with its name, type, state, zone and measures.'
+        location:
+          type: string
+          enum:
+          - club
+          - public
+          description: The main coordinate, the other points and how to get there. Not more open than
+            `place`.
+        content:
+          type: string
+          enum:
+          - club
+          - public
+          description: The description, the technical sheet and the files. Not more open than `place`.
+        protected:
+          type: boolean
+          description: 'Locks the place closed (bats, archaeology, private land…): nothing of a protected
+            place may be public.'
+    Place:
+      description: A place with everything about it.
+      allOf:
+      - $ref: '#/components/schemas/PlaceListItem'
+      - type: object
+        properties:
+          access:
+            type: string
+          description:
+            type: string
+          technical_sheet:
+            type: string
+          osm_type:
+            type: string
+            enum:
+            - node
+            - way
+            - relation
+            description: Left out if the place is not an element of OpenStreetMap.
+          osm_id:
+            type: integer
+            format: int64
+          osm_changes:
+            type: array
+            description: What is different in the OpenStreetMap element now from when the place was linked
+              or last reviewed (a tag, `position` or `removed`). Left out if nothing.
+            items:
+              type: object
+              properties:
+                key:
+                  type: string
+                before:
+                  type: string
+                after:
+                  type: string
+          area_path:
+            type: array
+            description: The zone and the ones it is in, the country first.
+            items:
+              $ref: '#/components/schemas/AreaRef'
+          created_by:
+            type: string
+            description: Login of who added it.
+          created_at:
+            type: string
+            format: date-time
+          updated_by:
+            type: string
+            description: Login of who last changed the place or any of its points.
+          updated_at:
+            type: string
+            format: date-time
+          points:
+            type: array
+            items:
+              $ref: '#/components/schemas/PlacePoint'
+          file_count:
+            type: integer
+            description: How many files are attached (GET /places/{id}/files).
+    PlacePointInput:
+      type: object
+      required:
+      - kind
+      - lat
+      - lon
+      properties:
+        kind:
+          type: string
+          enum:
+          - parking
+          - approach
+          - waypoint
+          - access
+          - other
+        name:
+          type: string
+          nullable: true
+        lat:
+          type: number
+          minimum: -90
+          maximum: 90
+        lon:
+          type: number
+          minimum: -180
+          maximum: 180
+        altitude_m:
+          type: integer
+          minimum: -500
+          maximum: 9000
+          nullable: true
+          description: In metres above sea level.
+        note:
+          type: string
+          nullable: true
+    PlacePoint:
+      type: object
+      properties:
+        id:
+          type: integer
+        place_id:
+          type: integer
+        kind:
+          type: string
+          enum:
+          - parking
+          - approach
+          - waypoint
+          - access
+          - other
+        name:
+          type: string
+        lat:
+          type: number
+        lon:
+          type: number
+        altitude_m:
+          type: integer
+        note:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    SystemInput:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+          nullable: true
+    SystemPlaceRef:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        subtype:
+          type: string
+          description: The subtype of the cavity (Cueva, Sima…).
+    SystemListItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        places:
+          type: array
+          items:
+            $ref: '#/components/schemas/SystemPlaceRef'
+    System:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+        created_by:
+          type: string
+          description: A login.
+        created_at:
+          type: string
+          format: date-time
+        updated_by:
+          type: string
+          description: Login of who last changed the system, its cavities or its files.
+        updated_at:
+          type: string
+          format: date-time
+        file_count:
+          type: integer
+        places:
+          type: array
+          description: 'Its cavities by name: each is a PlaceListItem with the long texts of a Place.'
+          items:
+            allOf:
+            - $ref: '#/components/schemas/PlaceListItem'
+            - type: object
+              properties:
+                access:
+                  type: string
+                description:
+                  type: string
+                technical_sheet:
+                  type: string
+                files:
+                  type: array
+                  description: The files of the cavity itself, not the system's.
+                  items:
+                    $ref: '#/components/schemas/PlaceFile'
+                points:
+                  type: array
+                  description: Its other points, for the map of the system.
+                  items:
+                    $ref: '#/components/schemas/PlacePoint'
+    PlaceFile:
+      type: object
+      description: A file of a place or of a system; exactly one of place_id and system_id is there.
+      properties:
+        id:
+          type: integer
+        place_id:
+          type: integer
+        system_id:
+          type: integer
+        title:
+          type: string
+          description: The caption given when it was attached; absent if none.
+        file_name:
+          type: string
+        content_type:
+          type: string
+        file_size:
+          type: integer
+        uploaded_by:
+          type: string
+          description: A login.
+        created_at:
+          type: string
+          format: date-time
+    PlaceRef:
+      type: object
+      description: 'A place as a client names it: enough to show it and link to it.'
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        type_name:
+          type: string
+          description: The subtype of a cavity ("Sima"), else its type.
+        where:
+          type: string
+          description: The zone and the ones it is in, from the most specific to the country.
