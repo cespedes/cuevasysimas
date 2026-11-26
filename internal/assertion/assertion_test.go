@@ -113,3 +113,24 @@ func TestVerifyRefuses(t *testing.T) {
 		t.Errorf("a clock a few seconds ahead: %v", err)
 	}
 }
+
+// TestSignMatchesTheIntranetsVector holds the same vector as the intranet's client of the catalogue
+// (catalogueclient, TestAssertionMatchesTheCataloguesVector): Ed25519 is deterministic, so two
+// implementations that agree on the format make the same bytes. If one of them changes it, one fails.
+func TestSignMatchesTheIntranetsVector(t *testing.T) {
+	seed := make([]byte, ed25519.SeedSize)
+	for i := range seed {
+		seed[i] = byte(i)
+	}
+	got, err := assertion.Sign(ed25519.NewKeyFromSeed(seed), assertion.Claims{
+		Issuer: "katiuskas-intranet", Subject: "0b9d6c1e-1111-4222-8333-444455556666", Name: "ana",
+		Groups: []string{"katiuskas"}, Roles: []string{"board"}, IssuedAt: 1700000000, ExpiresAt: 1700000060,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "v1.eyJpc3MiOiJrYXRpdXNrYXMtaW50cmFuZXQiLCJzdWIiOiIwYjlkNmMxZS0xMTExLTQyMjItODMzMy00NDQ0NTU1NTY2NjYiLCJuYW1lIjoiYW5hIiwiZ3JvdXBzIjpbImthdGl1c2thcyJdLCJyb2xlcyI6WyJib2FyZCJdLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MH0.6GSBn7Fv42bp8kHYypqOMbPofvV3W8kBTWvrUJrSlz0RbbBMfcyZY22bePT8RzFNmnD6cvDsmRCS9QiIo9-pBA"
+	if got != want {
+		t.Fatalf("assertion = %s, want %s", got, want)
+	}
+}
